@@ -6,8 +6,12 @@
  * (starting it if needed) and pushes GitHub events as channel notifications.
  *
  * Env vars:
- *   GITHUB_TOKEN        — PAT with repo scope (for the broker to poll GitHub)
- *   GITHUB_CHANNEL_PORT — broker port (default 7902)
+ *   GITHUB_TOKEN               — PAT with repo scope (for the broker to poll GitHub)
+ *   GITHUB_CHANNEL_PORT        — broker port (default 7902)
+ *   GITHUB_CHANNEL_SESSION_CWD — the calling session's cwd, captured by the launcher
+ *                                before it cd's to the plugin directory. Without it,
+ *                                watch_repo("auto") has no way to know where the
+ *                                caller is; see shared/session-cwd.ts.
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -16,6 +20,7 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { resolveDetectionCwd } from "./shared/session-cwd.ts";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -119,7 +124,7 @@ Events: ✅/❌ CI · 🔀 PR merged · 👀 Review requested · 💬 Mentions �
 When a PR merges, the server automatically watches for a deploy workflow to complete on \`main\` (up to 30 min, polling every 30s). Multiple PRs merging in parallel are each tracked independently.
 
 Tools:
-- watch_repo: Watch a repo ("auto" detects from cwd)
+- watch_repo: Watch a repo ("auto" detects it from this session's working directory)
 - unwatch_repo: Stop watching a repo
 - list_watched: Show watched repos
 - show_status: Show broker health and active deploy watches`,
@@ -130,12 +135,12 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "watch_repo",
-      description: 'Watch a GitHub repo for CI, review, deploy, and PR events. Use repo="auto" to detect from cwd.',
+      description: 'Watch a GitHub repo for CI, review, deploy, and PR events. Use repo="auto" to detect from the calling session\'s working directory.',
       inputSchema: {
         type: "object" as const,
         properties: {
           repo: { type: "string", description: '"owner/repo" or "auto"' },
-          cwd: { type: "string", description: "Directory to detect from (default: process cwd)" },
+          cwd: { type: "string", description: "Absolute path to detect from. Defaults to the calling session's working directory; only needed to detect from somewhere else." },
         },
         required: ["repo"],
       },
@@ -188,13 +193,22 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       let repo = (args.repo as string).trim();
 
       if (repo === "auto") {
-        const cwd = (args.cwd as string | undefined) ?? process.cwd();
-        const detected = await detectRepo(cwd);
+        // Deliberately NOT process.cwd(): the launcher cd's to the plugin's
+        // install directory, so process.cwd() is this plugin's own checkout for
+        // every caller. Handing that back is the bug, so when the caller's
+        // directory is unknown we say so instead of guessing.
+        const resolved = resolveDetectionCwd({ explicitCwd: args.cwd as string | undefined });
+        if (!resolved.ok) {
+          return { content: [{ type: "text", text: resolved.error }] };
+        }
+        const detected = await detectRepo(resolved.cwd);
         if (!detected) {
           return {
             content: [{
               type: "text",
-              text: `Could not detect a GitHub repo from: ${cwd}\nSpecify the repo explicitly, e.g. watch_repo("owner/repo").`,
+              text: `Could not detect a GitHub repo from: ${resolved.cwd}\n` +
+                `That directory has no git remote pointing at github.com. ` +
+                `Specify the repo explicitly, e.g. watch_repo("owner/repo").`,
             }],
           };
         }
@@ -311,17 +325,17 @@ async function heartbeat() {
 async function main() {
   await ensureBroker();
 
-  // Auto-detect repo from cwd
-  const cwd = process.cwd();
-  const detectedRepo = await detectRepo(cwd);
-  const initialRepos = detectedRepo ? [detectedRepo] : [];
-  if (detectedRepo) {
-    watchedRepos.add(detectedRepo);
-    log(`Auto-watching ${detectedRepo}`);
-  }
-
-  // Register with broker
-  const reg = await brokerFetch<{ id: string }>("/register", { repos: initialRepos });
+  // No auto-watch at startup. This used to call detectRepo(process.cwd()),
+  // and because the launcher cd's to the plugin directory that cwd is this
+  // plugin's own checkout -- so every session on the machine silently
+  // subscribed to fryanpan/github-claude-channel and nothing else. That made
+  // list_watched and show_status read as full coverage while no session was
+  // subscribed to the repo it was actually working in.
+  //
+  // A session now starts watching nothing and says so, which is the honest
+  // state. Sessions call watch_repo("auto") themselves; the fleet's startup
+  // rule already does exactly that.
+  const reg = await brokerFetch<{ id: string }>("/register", { repos: [] });
   sessionId = reg.id;
   log(`Registered as session ${sessionId}`);
 

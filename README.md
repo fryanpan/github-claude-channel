@@ -69,10 +69,17 @@ go in here.
 ## Setup
 
 ```
-watch_repo auto    # detects repo from cwd, or specify "owner/repo"
+watch_repo auto    # detects the repo from your working directory, or specify "owner/repo"
 ```
 
-That's it. The server auto-detects the repo from your working directory and starts listening.
+Call this once per session. A session starts out watching nothing and says so, which is
+deliberate: it used to auto-watch at startup, and because the MCP server runs from the
+plugin's own install directory, every session on the machine silently subscribed to *this*
+repo instead of the one it was working in. The watch list then looked populated while no
+session was subscribed to anything it cared about.
+
+If the plugin can't tell which directory you're in, `auto` says so rather than guessing —
+pass `cwd` (an absolute path) or the `"owner/repo"` explicitly.
 
 ## How it works
 
@@ -84,7 +91,7 @@ Multiple sessions on the same machine all receive events — each session indepe
 
 | Tool | Description |
 |------|-------------|
-| `watch_repo` | Watch a repo (`"auto"` detects from cwd) |
+| `watch_repo` | Watch a repo (`"auto"` detects it from the calling session's working directory) |
 | `unwatch_repo` | Stop watching a repo |
 | `list_watched` | Show repos this session is watching |
 | `show_status` | Show broker health, sessions, and active deploy watches |
@@ -95,6 +102,7 @@ Multiple sessions on the same machine all receive events — each session indepe
 |----------|---------|-------------|
 | `GITHUB_TOKEN` | — | PAT with `repo` scope |
 | `GITHUB_CHANNEL_PORT` | `7902` | Broker port (change if 7902 is taken by another user) |
+| `GITHUB_CHANNEL_SESSION_CWD` | — | Set by the launcher, not by you: the directory the session was started in, captured before the launcher `cd`s to the plugin directory. This is what `watch_repo("auto")` detects from. |
 
 ## Multi-user
 

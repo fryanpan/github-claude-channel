@@ -39,6 +39,18 @@
 
 set -u
 
+# Hand the session's cwd to the server BEFORE we leave it.
+#
+# The cd near the end of this script means the server's own process.cwd() is
+# the plugin's install directory, identical for every session on the machine.
+# Deriving "which repo is this session in" from it therefore answered with the
+# plugin's OWN repo for everybody -- watch_repo("auto") handed each caller
+# fryanpan/github-claude-channel no matter where it was called from, and the
+# resulting watch list looked correct while subscribing nobody to anything.
+# See shared/session-cwd.ts.
+GITHUB_CHANNEL_SESSION_CWD="$(pwd -P 2>/dev/null || pwd)"
+export GITHUB_CHANNEL_SESSION_CWD
+
 entrypoint="${1:-}"
 if [ -z "$entrypoint" ]; then
   echo "github-channel-mcp: no entrypoint given (expected server.ts as \$1)" >&2
@@ -104,9 +116,17 @@ if [ -n "$config_home" ] && [ -r "$config_home/github-claude-channel/env" ]; the
   . "$config_home/github-claude-channel/env"
 fi
 
-# A seam for the test: prove resolution works without starting a stdio server.
+# Seams for the tests: prove bun resolution and cwd capture work without
+# starting a stdio server.
 if [ "${GITHUB_CHANNEL_MCP_PRINT_BUN:-}" = "1" ]; then
   echo "$bun_bin"
+  exit 0
+fi
+if [ "${GITHUB_CHANNEL_MCP_PRINT_SESSION_CWD:-}" = "1" ]; then
+  # Read it back from a CHILD process, so the seam proves the variable is
+  # exported and not merely assigned. Printing "$GITHUB_CHANNEL_SESSION_CWD"
+  # here would pass just as happily with the export deleted.
+  sh -c 'echo "${GITHUB_CHANNEL_SESSION_CWD:-<not-exported>}"'
   exit 0
 fi
 
