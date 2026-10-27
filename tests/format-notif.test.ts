@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatNotif, htmlUrl, type GHNotif } from "../shared/format-notif.ts";
+import { NEW_ISSUE_WINDOW_MS, formatNotif, htmlUrl, isNewIssue, type GHNotif } from "../shared/format-notif.ts";
 
 function notif(reason: string, type: string, url: string | null): GHNotif {
   return {
@@ -27,7 +27,7 @@ describe("formatNotif", () => {
 
   test("forwards a new issue on a watched repo", () => {
     const msg = formatNotif(notif("subscribed", "Issue", "https://api.github.com/repos/o/r/issues/5"));
-    expect(msg).toBe("🆕 New issue on `o/r`: **Fix the thing**");
+    expect(msg).toBe("🆕 New issue on `o/r`: **Fix the thing**\nhttps://github.com/o/r/issues/5");
   });
 
   test("drops subscribed activity that is not an issue", () => {
@@ -45,5 +45,22 @@ describe("formatNotif", () => {
 describe("htmlUrl", () => {
   test("returns null for a url it does not recognise", () => {
     expect(htmlUrl("https://api.github.com/repos/o/r/releases/1")).toBeNull();
+  });
+});
+
+describe("isNewIssue", () => {
+  const now = Date.parse("2026-01-01T12:00:00Z");
+
+  test("is true for an issue created inside the window", () => {
+    expect(isNewIssue("2026-01-01T11:59:00Z", now)).toBe(true);
+  });
+
+  test("is false for activity on an old issue", () => {
+    expect(isNewIssue(new Date(now - NEW_ISSUE_WINDOW_MS - 1000).toISOString(), now)).toBe(false);
+    expect(isNewIssue("2024-03-01T00:00:00Z", now)).toBe(false);
+  });
+
+  test("is false for a timestamp it cannot parse", () => {
+    expect(isNewIssue("", now)).toBe(false);
   });
 });
