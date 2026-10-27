@@ -12,6 +12,8 @@
  * - Route events to the right sessions by repo
  */
 
+import { formatNotif, isNewIssue, type GHNotif } from "./shared/format-notif.ts";
+
 const PORT = parseInt(process.env.GITHUB_CHANNEL_PORT ?? "7902", 10);
 /**
  * Resolve a token the way a person would expect it to be found.
@@ -88,7 +90,9 @@ interface DeployWatch {
 const sessions = new Map<string, Session>();
 const deployWatches = new Map<string, DeployWatch[]>(); // repo → watches
 const reportedRunIds = new Set<string>(); // action run IDs already delivered
-const seenNotifIds = new Set<string>(); // notification IDs already processed
+// Keyed on thread id + reason: GitHub reuses one thread id per issue or PR, so
+// an id alone would drop an assignment on a thread first seen as `subscribed`.
+const seenNotifIds = new Set<string>();
 
 let lastNotifSince = new Date(Date.now() - 60_000).toISOString();
 
@@ -144,13 +148,6 @@ async function ghFetch(pathOrUrl: string): Promise<Response> {
 
 // ─── Notification polling ─────────────────────────────────────────────────────
 
-interface GHNotif {
-  id: string;
-  reason: string;
-  repository: { full_name: string };
-  subject: { type: string; title: string; url: string };
-}
-
 async function pollNotifications() {
   if (!GITHUB_TOKEN) return;
   const watched = reposWithWatchers();
@@ -171,20 +168,25 @@ async function pollNotifications() {
   if (!Array.isArray(notifs)) return;
 
   for (const n of notifs) {
-    if (seenNotifIds.has(n.id)) continue;
-    seenNotifIds.add(n.id);
-
     const repo = n.repository?.full_name;
     if (!repo || !watched.has(repo)) continue;
+
+    const seenKey = `${n.id}:${n.reason}`;
+    if (seenNotifIds.has(seenKey)) continue;
+    seenNotifIds.add(seenKey);
 
     const { type, url } = n.subject;
 
     if (n.reason === "ci_activity" || type === "CheckSuite") {
       // Fetch the check suite to get the conclusion
-      handleCheckSuiteNotif(repo, url).catch(() => {});
+      if (url) handleCheckSuiteNotif(repo, url).catch(() => {});
     } else if (type === "PullRequest" && n.reason === "state_change") {
       // Could be a merge or close — fetch the PR to find out
-      handlePRStateChange(repo, n.subject.title, url).catch(() => {});
+      if (url) handlePRStateChange(repo, n.subject.title, url).catch(() => {});
+    } else if (n.reason === "subscribed" && type === "Issue") {
+      // `subscribed` covers every kind of activity on a watched repo's issues;
+      // fetch the issue so a comment on an old one is not announced as new
+      if (url) handleSubscribedIssue(repo, n).catch(() => {});
     } else {
       const msg = formatNotif(n);
       if (msg) deliver(repo, msg);
@@ -210,6 +212,19 @@ async function handleCheckSuiteNotif(repo: string, suiteUrl: string) {
   }
 }
 
+async function handleSubscribedIssue(repo: string, n: GHNotif) {
+  try {
+    const res = await ghFetch(n.subject.url!);
+    if (!res.ok) return;
+    const issue = await res.json() as { created_at: string };
+    if (!isNewIssue(issue.created_at, Date.now())) return;
+    const msg = formatNotif(n);
+    if (msg) deliver(repo, msg);
+  } catch (e) {
+    log(`Issue fetch error: ${e}`);
+  }
+}
+
 async function handlePRStateChange(repo: string, title: string, prUrl: string) {
   try {
     const res = await ghFetch(prUrl);
@@ -231,20 +246,6 @@ async function handlePRStateChange(repo: string, title: string, prUrl: string) {
     }
   } catch (e) {
     log(`PR fetch error: ${e}`);
-  }
-}
-
-function formatNotif(n: GHNotif): string | null {
-  const repo = n.repository.full_name;
-  const title = n.subject.title;
-  switch (n.reason) {
-    case "review_requested":
-      return `👀 Review requested on \`${repo}\`: **${title}**`;
-    case "comment":
-    case "mention":
-      return `💬 Mention on \`${repo}\`: **${title}**`;
-    default:
-      return null;
   }
 }
 
