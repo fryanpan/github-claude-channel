@@ -12,6 +12,8 @@
  * - Route events to the right sessions by repo
  */
 
+import { formatNotif, type GHNotif } from "./shared/format-notif.ts";
+
 const PORT = parseInt(process.env.GITHUB_CHANNEL_PORT ?? "7902", 10);
 /**
  * Resolve a token the way a person would expect it to be found.
@@ -144,13 +146,6 @@ async function ghFetch(pathOrUrl: string): Promise<Response> {
 
 // ─── Notification polling ─────────────────────────────────────────────────────
 
-interface GHNotif {
-  id: string;
-  reason: string;
-  repository: { full_name: string };
-  subject: { type: string; title: string; url: string };
-}
-
 async function pollNotifications() {
   if (!GITHUB_TOKEN) return;
   const watched = reposWithWatchers();
@@ -181,10 +176,10 @@ async function pollNotifications() {
 
     if (n.reason === "ci_activity" || type === "CheckSuite") {
       // Fetch the check suite to get the conclusion
-      handleCheckSuiteNotif(repo, url).catch(() => {});
+      if (url) handleCheckSuiteNotif(repo, url).catch(() => {});
     } else if (type === "PullRequest" && n.reason === "state_change") {
       // Could be a merge or close — fetch the PR to find out
-      handlePRStateChange(repo, n.subject.title, url).catch(() => {});
+      if (url) handlePRStateChange(repo, n.subject.title, url).catch(() => {});
     } else {
       const msg = formatNotif(n);
       if (msg) deliver(repo, msg);
@@ -231,20 +226,6 @@ async function handlePRStateChange(repo: string, title: string, prUrl: string) {
     }
   } catch (e) {
     log(`PR fetch error: ${e}`);
-  }
-}
-
-function formatNotif(n: GHNotif): string | null {
-  const repo = n.repository.full_name;
-  const title = n.subject.title;
-  switch (n.reason) {
-    case "review_requested":
-      return `👀 Review requested on \`${repo}\`: **${title}**`;
-    case "comment":
-    case "mention":
-      return `💬 Mention on \`${repo}\`: **${title}**`;
-    default:
-      return null;
   }
 }
 

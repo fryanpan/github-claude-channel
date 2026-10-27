@@ -119,7 +119,7 @@ const mcp = new Server(
     },
     instructions: `GitHub events arrive as channel notifications from this server.
 
-Events: ✅/❌ CI · 🔀 PR merged · 👀 Review requested · 💬 Mentions · 🚀/💥 Deploys
+Events: ✅/❌ CI · 🔀 PR merged · 👀 Review requested · 💬 Mentions · 📌 Assigned · 🆕 New issues · 🚀/💥 Deploys
 
 When a PR merges, the server automatically watches for a deploy workflow to complete on \`main\` (up to 30 min, polling every 30s). Multiple PRs merging in parallel are each tracked independently.
 

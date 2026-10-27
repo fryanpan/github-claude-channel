@@ -30,6 +30,8 @@ When a PR merges, the server automatically watches for a deploy workflow to comp
 | PR closed without merging | 🚫 |
 | Review requested | 👀 |
 | Mention / comment | 💬 |
+| Issue or PR assigned to you | 📌 (with link) |
+| New issue on a watched repo | 🆕 |
 | Deploy workflow completed | 🚀/💥 (triggered by merge) |
 
 ## Requirements
