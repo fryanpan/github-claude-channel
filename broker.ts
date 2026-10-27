@@ -337,7 +337,9 @@ async function deployWatchLoop() {
 
 // ─── HTTP server ─────────────────────────────────────────────────────────────
 
+// Loopback only: the API has no auth and hands out the owner's notifications.
 Bun.serve({
+  hostname: "127.0.0.1",
   port: PORT,
   async fetch(req) {
     const url = new URL(req.url);
